@@ -20,3 +20,49 @@ library(here)
 half_hourly_fluxes <- readr::read_csv(paste0(here::here(),"./data/FLX_CH-Lae_FLUXNET2015_FULLSET_HH_2004-2006.csv"))
 ```
 
+## Data processing
+
+### Select necessary data
+
+```{r, select necessary data, message=FALSE}
+half_hourly_fluxes <- select(
+  half_hourly_fluxes,
+  starts_with("TIMESTAMP"),
+  ends_with("_F"),
+  GPP_NT_VUT_REF,
+  NEE_VUT_REF_QC,
+  starts_with("SWC_F_MDS_"),
+  -contains("JSB"),
+  NIGHT
+)
+```
+
+### adjust start and end time format
+```{r}
+half_hourly_fluxes <- half_hourly_fluxes |> 
+  mutate(across(starts_with("TIMESTAMP_"), ymd_hm))
+```
+
+
+### plot clean version
+
+```{r, message=FALSE}
+half_hourly_fluxes <- readr::read_csv(paste0(here::here(),"./data/FLX_CH-Lae_FLUXNET2015_FULLSET_HH_2004-2006_CLEAN.csv"))
+
+set.seed(2023)
+plot_1 <- half_hourly_fluxes |>
+  sample_n(2000) |>  # to reduce the dataset
+  ggplot(aes(x = SW_IN_F, y = GPP_NT_VUT_REF)) +
+  geom_point(size = 0.75, alpha = 0.4) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(x = expression(paste("Shortwave radiation (W m"^-2, ")")), 
+       y = expression(paste("GPP (gC m"^-2, "s"^-1, ")"))) +
+  theme_classic()
+
+segment_points <- data.frame(x0 = 332, y0 = 3.65, y_regr = 8.77)
+
+plot_1 +
+  geom_segment(aes(x = x0, y = y0, xend = x0, yend = y_regr), 
+               data = segment_points,
+               color = "blue", lwd = 1.2, alpha = 0.8)
+```

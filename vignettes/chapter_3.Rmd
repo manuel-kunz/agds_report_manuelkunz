@@ -1,0 +1,14 @@
+---
+title: Regression and classification
+author: Manuel Kunz
+output: html_document
+---
+
+## Setup
+
+```{r, setup, message=FALSE}
+library(dplyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+```

@@ -11,6 +11,12 @@ library(dplyr)
 library(readr)
 library(lubridate)
 library(ggplot2)
+library(here)
 ```
 
+## Data import
+
+```{r, data import, message=FALSE}
+half_hourly_fluxes <- readr::read_csv(paste0(here::here(),"./data/FLX_CH-Lae_FLUXNET2015_FULLSET_HH_2004-2006.csv"))
+```
 

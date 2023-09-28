@@ -66,3 +66,15 @@ plot_1 +
                data = segment_points,
                color = "blue", lwd = 1.2, alpha = 0.8)
 ```
+
+### remove NAs
+```{r, message=FALSE}
+df <- half_hourly_fluxes |>
+  dplyr::select(-starts_with("TIMESTAMP")) |>
+  tidyr::drop_na()
+```
+
+### fit univariate linear regression
+```{r, message=FALSE}
+linmod1 <- lm(GPP_NT_VUT_REF ~ SW_IN_F, data = df)
+```

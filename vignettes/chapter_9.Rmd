@@ -1,0 +1,75 @@
+---
+title: "Chapter_9"
+author: "Manuel Kunz"
+date: "2023-10-04"
+output: html_document
+---
+
+```{r, setup, echo=FALSE, include=FALSE}
+library(dplyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(here)
+library(caret)
+library(tidyr)
+```
+
+## Data and the modelling challenge
+In this chapter, we formulate a model for predicting GPP from a set of covariates (other variables that vary in parallel, here the meteorological variables). This is to say that GPP_NT_VUT_REF is the target variable, and other variables that are available in our dataset are the predictors.
+
+Let’s read the data, select suitable variables, interpret missing value codes, and select only good-quality data (where at least 80% of the underlying half-hourly data was good quality measured data, and not gap-filled).
+
+### Data wrangling code
+
+```{r,data wrangling,message=FALSE}
+daily_fluxes <- readr::read_csv(paste0(here::here(),"./data/FLX_CH-Dav_FLUXNET2015_FULLSET_DD_1997-2014_1-3.csv")) |>
+
+  # select only the variables we are interested in
+  dplyr::select(TIMESTAMP,
+                GPP_NT_VUT_REF,    # the target
+                ends_with("_QC"),  # quality control info
+                ends_with("_F"),   # includes all all meteorological covariates
+                -contains("JSB")   # weird useless variable
+                ) |>
+
+  # convert to a nice date object
+  dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+
+  # set all -9999 to NA
+  mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+  
+  # retain only data based on >=80% good-quality measurements
+  # overwrite bad data with NA (not dropping rows)
+  dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+
+  # drop QC variables (no longer needed)
+  dplyr::select(-ends_with("_QC"))
+
+```
+
+## Model formulation
+### Formula notation
+In R, it is common to use the formula notation to specify the target and predictor variables. You have encountered formulas before, e.g., for a linear regression using the lm() function. To specify a linear regression model for GPP_NT_VUT_REF with three predictors SW_IN_F, VPD_F, and TA_F, to be fitted to data daily_fluxes, we write:
+```{r, linear regression example, message = FALSE}
+lm(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, data = daily_fluxes)
+```
+### Using the caret package to call the base-R regression function
+```{r, caret regression}
+caret::train(
+  form = GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F,
+  data = daily_fluxes |> drop_na(), # drop missing values
+  trControl = caret::trainControl(method = "none"), # no resampling
+  method = "lm"
+)
+```
+
+
+  

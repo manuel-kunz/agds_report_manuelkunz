@@ -62,14 +62,189 @@ In R, it is common to use the formula notation to specify the target and predict
 lm(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, data = daily_fluxes)
 ```
 ### Using the caret package to call the base-R regression function
-```{r, caret regression}
+```{r, caret regression, message=FALSE}
 caret::train(
   form = GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F,
   data = daily_fluxes |> drop_na(), # drop missing values
   trControl = caret::trainControl(method = "none"), # no resampling
-  method = "lm"
+  method = "knn"
+)
+```
+```{r, message = FALSE}
+set.seed(123)  # for reproducibility
+split <- rsample::initial_split(daily_fluxes, prop = 0.7, strata = "VPD_F")
+daily_fluxes_train <- rsample::training(split)
+daily_fluxes_test <- rsample::testing(split)
+
+plot_data <- daily_fluxes_train |> 
+  dplyr::mutate(split = "train") |> 
+  dplyr::bind_rows(daily_fluxes_test |> 
+  dplyr::mutate(split = "test")) |> 
+  tidyr::pivot_longer(cols = 2:9, names_to = "variable", values_to = "value")
+
+plot_data |> 
+  ggplot(aes(x = value, y = ..density.., color = split)) +
+  geom_density() +
+  facet_wrap(~variable, scales = "free")
+
+```
+```{r}
+pp <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, data = daily_fluxes_train) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+caret::train(
+  pp, 
+  data = daily_fluxes_train, 
+  method = "knn",
+  trControl = caret::trainControl(method = "none")
 )
 ```
 
+### Standardisation
 
-  
+```{r}
+daily_fluxes |> 
+  summarise(across(where(is.numeric), ~quantile(.x, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE))) |> 
+  t() |> 
+  as_tibble(rownames = "variable") |> 
+  setNames(c("variable", "min", "q25", "q50", "q75", "max"))
+```
+####
+```{r, data preparation, message=FALSE}
+pp_prep <- recipes::prep(pp, training = daily_fluxes_train) 
+```
+
+#### transform data
+```{r, transform data, message=FALSE}
+daily_fluxes_juiced <- recipes::juice(pp_prep)
+```
+
+#### bake data
+```{r, bake data, message = FALSE}
+daily_fluxes_baked <- recipes::bake(pp_prep, new_data = daily_fluxes_train)
+
+# confirm that juice and bake return identical objects when given the same data
+all_equal(daily_fluxes_juiced, daily_fluxes_baked)
+```
+#### Plot original and standardasied data
+```{r, standardised data plots, message = FALSE}
+# prepare data for plotting
+plot_data_original <- daily_fluxes_train |> 
+  dplyr::select(one_of(c("SW_IN_F", "VPD_F", "TA_F"))) |> 
+  tidyr::pivot_longer(cols = c(SW_IN_F, VPD_F, TA_F), names_to = "var", values_to = "val")
+
+plot_data_juiced <- daily_fluxes_juiced |> 
+  dplyr::select(one_of(c("SW_IN_F", "VPD_F", "TA_F"))) |> 
+  tidyr::pivot_longer(cols = c(SW_IN_F, VPD_F, TA_F), names_to = "var", values_to = "val")
+
+# plot density
+plot_1 <- ggplot(data = plot_data_original, aes(val, ..density..)) +
+  geom_density() +
+  facet_wrap(~var)
+
+# plot density by var
+plot_2 <- ggplot(data = plot_data_juiced, aes(val, ..density..)) +
+  geom_density() +
+  facet_wrap(~var)
+
+# combine both plots
+cowplot::plot_grid(plot_1, plot_2, nrow = 2)
+```
+### Data gaps
+#### visualise missing data
+````{r, visualise missing data, message = FALSE}
+visdat::vis_miss(
+  daily_fluxes,
+  cluster = FALSE, 
+  warn_large_data = FALSE
+  )
+```
+
+#### zero variance predictor
+```{r, zero variance predicator, message = FALSE}
+caret::nearZeroVar(daily_fluxes, saveMetrics = TRUE)
+```
+#### target engineering
+```{r, target engineering, message = FALSE}
+plot_1 <- ggplot(data = daily_fluxes, aes(x = WS_F, y = ..density..)) +
+  geom_histogram() +
+  labs(title = "Original")
+
+plot_2 <- ggplot(data = daily_fluxes, aes(x = log(WS_F), y = ..density..)) +
+  geom_histogram() +
+  labs(title = "Log-transformed")
+
+cowplot::plot_grid(plot_1, plot_2)
+```
+```{r}
+recipes::recipe(WS_F ~ ., data = daily_fluxes) |>   # it's of course non-sense to model wind speed like this
+  recipes::step_log(all_outcomes())
+```
+#### Box-Cox transformation
+```{r box-cox-transformation, message=FALSE}
+pp <- recipes::recipe(WS_F ~ ., data = daily_fluxes_train) |>
+  recipes::step_BoxCox(recipes::all_outcomes())
+
+prep_pp <- recipes::prep(pp, training = daily_fluxes_train |> drop_na())
+daily_fluxes_baked <- recipes::bake(prep_pp, new_data = daily_fluxes_test |> drop_na())
+daily_fluxes_baked |>
+  ggplot(aes(x = WS_F, y = ..density..)) +
+  geom_histogram() +
+  labs(title = "Box-Cox-transformed")
+```
+### Summary
+#### Data cleaning
+```{r}
+# Data cleaning: looks ok, no obviously bad data
+# no long tail, therefore no further target engineering
+daily_fluxes |> 
+  ggplot(aes(x = GPP_NT_VUT_REF, y = ..count..)) + 
+  geom_histogram()
+```
+
+#### Model setup
+```{r, model setup}
+# Data splitting
+set.seed(1982)  # for reproducibility
+split <- rsample::initial_split(daily_fluxes, prop = 0.7, strata = "VPD_F")
+daily_fluxes_train <- rsample::training(split)
+daily_fluxes_test <- rsample::testing(split)
+
+# Model and pre-processing formulation, use all variables but LW_IN_F
+pp <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = daily_fluxes_train |> drop_na()) |> 
+  recipes::step_BoxCox(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+# Fit linear regression model
+mod_lm <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "lm",
+  trControl = caret::trainControl(method = "none"),
+  metric = "RMSE"
+)
+
+# Fit KNN model
+mod_knn <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+```
+#### model evaluation
+```{r, model evaluation}
+source(paste0(here::here(),"./R/eval_model.R"))
+
+# linear regression model
+eval_model(mod = mod_lm, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+```
+#### KNN model evaluation
+```{r, KNN model}
+eval_model(mod = mod_knn, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+```
